@@ -1,1 +1,0 @@
-ALTER TABLE sales ADD COLUMN moved_to_returns TINYINT(1) DEFAULT 0;

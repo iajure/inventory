@@ -1,1 +1,0 @@
-ALTER TABLE products ADD COLUMN moved_to_sales TINYINT(1) DEFAULT 0;

@@ -59,66 +59,71 @@ class Controller_Returns extends Admin_Controller
         if ($this->form_validation->run() == TRUE) {
             $image = null;
             $image_from_sales = $this->input->post('image');
+            // Always use the image from sales dropdown if present and not empty
             if (!empty($image_from_sales)) {
                 $image = basename($image_from_sales);
-            } else if (isset($_FILES['return_image']['name']) && $_FILES['return_image']['name']) {
+            } else if (isset($_FILES['product_image']['name']) && $_FILES['product_image']['name']) {
+                // Only use uploaded image if no sales image is selected
                 $image = $this->upload_image();
             }
+            // If still empty, use default
             if (empty($image)) {
                 $image = 'default.jpg';
             }
+            // Always store returns images in returns_image folder, even if from sales
             if ($image !== 'default.jpg' && strpos($image, 'returns_image/') === false) {
+                // Copy image from sales_image to returns_image if it exists and not already in returns_image
                 $sales_img_path = FCPATH . 'assets/images/sales_image/' . $image;
                 $returns_img_path = FCPATH . 'assets/images/returns_image/' . $image;
                 if (file_exists($sales_img_path) && !file_exists($returns_img_path)) {
                     @copy($sales_img_path, $returns_img_path);
                 }
             }
-
+            // Copy image to product_image folder for products page
+            if ($image !== 'default.jpg') {
+                $src_img_path = FCPATH . 'assets/images/returns_image/' . $image;
+                $dest_img_path = FCPATH . 'assets/images/product_image/' . $image;
+                if (file_exists($src_img_path) && !file_exists($dest_img_path)) {
+                    @copy($src_img_path, $dest_img_path);
+                }
+                // Also check if image is from sales_image and not in returns_image
+                $src_sales_img_path = FCPATH . 'assets/images/sales_image/' . $image;
+                if (file_exists($src_sales_img_path) && !file_exists($dest_img_path)) {
+                    @copy($src_sales_img_path, $dest_img_path);
+                }
+            }
+            // Add/update product as returned in products table
+            $this->load->model('Model_products');
+            // Always create a new duplicate product for each return, keep the original name
+            $product_data = [
+                'name' => $this->input->post('name'),
+                'price' => $this->input->post('price'),
+                'qty' => $this->input->post('qty'),
+                'image' => $image,
+                'description' => $this->input->post('description'),
+                'returned' => 1,
+                'sku' => '',
+                'attribute_value_id' => '',
+                'availability' => 1,
+                'product_date' => date('Y-m-d')
+            ];
+            $this->Model_products->create($product_data);
             $data = array(
                 'customer_name' => $this->input->post('customer_name'),
                 'name' => $this->input->post('name'),
                 'qty' => $this->input->post('qty'),
                 'price' => $this->input->post('price'),
                 'description' => $this->input->post('description'),
-                'image' => $image,
+                'image' => $image, // Only filename, always in returns_image folder
                 'return_date' => $this->input->post('return_date')
             );
-
             $create = $this->Model_returns->create($data);
-
-            // --- Add to products table if not already present ---
-            $this->load->model('model_products');
-            $product = $this->model_products->getProductByName($this->input->post('name'));
-            if (!$product) {
-                $product_data = [
-                    'name' => $this->input->post('name'),
-                    'qty' => $this->input->post('qty'),
-                    'price' => $this->input->post('price'),
-                    'description' => $this->input->post('description'),
-                    'image' => $image,
-                    'returned_from_sales' => 1 // You need to add this column to products table
-                ];
-                $this->model_products->create($product_data);
-            } else {
-                // Optionally, update the product to mark as returned
-                $this->model_products->update(['returned_from_sales' => 1], $product['id']);
+            // Set is_returned=1 for the sales record if sales_id is posted
+            $sales_id = $this->input->post('sales_id');
+            if ($create && $sales_id) {
+                $this->load->model('Model_sales');
+                $this->Model_sales->update(['is_returned' => 1], $sales_id);
             }
-            // --- end ---
-
-            // --- Remove from manage sales page logic ---
-            // Mark the sales item as "moved_to_returns" (soft remove)
-            $this->load->model('Model_sales');
-            $sales_item = $this->Model_sales->getSalesData(null, [
-                'name' => $this->input->post('name'),
-                'customer_name' => $this->input->post('customer_name')
-            ]);
-            if ($sales_item && isset($sales_item[0]['id'])) {
-                $this->db->where('id', $sales_item[0]['id']);
-                $this->db->update('sales', ['moved_to_returns' => 1]);
-            }
-            // --- end ---
-
             if ($create) {
                 $this->session->set_flashdata('success', 'Successfully created');
                 redirect('Controller_Returns/', 'refresh');
@@ -128,7 +133,7 @@ class Controller_Returns extends Admin_Controller
             }
         } else {
             $this->load->model('Model_sales');
-            $sales = $this->Model_sales->getSalesData();
+            $sales = $this->Model_sales->getUnreturnedSales();
             foreach ($sales as &$sale) {
                 if (isset($sale['image'])) {
                     $sale['image'] = $sale['image'] ? basename($sale['image']) : 'default.jpg';
@@ -139,6 +144,7 @@ class Controller_Returns extends Admin_Controller
         }
     }
 
+
     private function upload_image()
     {
         $config['upload_path'] = 'assets/images/returns_image';
@@ -147,10 +153,10 @@ class Controller_Returns extends Admin_Controller
         $config['max_size'] = '1000';
         $this->load->library('upload', $config);
         // Fix: use correct input name for file upload
-        if (!isset($_FILES['return_image']['name']) || !$_FILES['return_image']['name']) {
+        if (!isset($_FILES['product_image']['name']) || !$_FILES['product_image']['name']) {
             return 'default.jpg'; // Only filename
         }
-        if (!$this->upload->do_upload('return_image')) {
+        if (!$this->upload->do_upload('product_image')) {
             return 'default.jpg';
         }
         $data = $this->upload->data();
@@ -171,15 +177,17 @@ class Controller_Returns extends Admin_Controller
         $this->form_validation->set_rules('return_date', 'Date', 'trim|required');
         $this->form_validation->set_rules('customer_name', 'Customer Name', 'trim|required');
         if ($this->form_validation->run() == TRUE) {
+            $returns_data = $this->Model_returns->getReturnsData($id);
             $data = [
                 'customer_name' => $this->input->post('customer_name'),
                 'name' => $this->input->post('name'),
                 'qty' => $this->input->post('qty'),
-                'price' => $this->input->post('price'), // Save price
+                'price' => $this->input->post('price'),
                 'description' => $this->input->post('description'),
-                'return_date' => $this->input->post('return_date')
+                'return_date' => $this->input->post('return_date'),
+                'image' => $returns_data['image'] // Default to old image
             ];
-            if (isset($_FILES['return_image']['size']) && $_FILES['return_image']['size'] > 0 && $_FILES['return_image']['name']) {
+            if (isset($_FILES['product_image']['size']) && $_FILES['product_image']['size'] > 0 && $_FILES['product_image']['name']) {
                 $upload_image = $this->upload_image();
                 $data['image'] = $upload_image;
             }

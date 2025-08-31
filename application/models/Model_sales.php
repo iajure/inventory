@@ -3,6 +3,14 @@
 defined('BASEPATH') OR exit('No direct script access allowed');
 class Model_sales extends CI_Model
 {
+    // Get only sales items that have not been returned
+    public function getUnreturnedSales()
+    {
+        $this->db->select('*');
+        $this->db->where('is_returned', 0);
+        $query = $this->db->get('sales');
+        return $query->result_array();
+    }
     public function __construct()
     {
         parent::__construct();
@@ -11,6 +19,7 @@ class Model_sales extends CI_Model
 
     public function getSalesData($id = null, $where = [])
     {
+        $this->db->select('*');
         if($id) {
             $query = $this->db->get_where('sales', array('id' => $id));
             return $query->row_array();
@@ -20,10 +29,9 @@ class Model_sales extends CI_Model
             $query = $this->db->get('sales');
             return $query->result_array();
         }
-        // Only return sales not moved to returns
-        $this->db->where('(moved_to_returns IS NULL OR moved_to_returns = 0)');
-        $query = $this->db->get('sales');
-        return $query->result_array();
+    // Return all sales (including sold/returned)
+    $query = $this->db->get('sales');
+    return $query->result_array();
     }
 
     public function create($data = array())

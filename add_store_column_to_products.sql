@@ -1,1 +1,0 @@
-ALTER TABLE products ADD COLUMN store INT DEFAULT 1;
